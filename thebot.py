@@ -5,7 +5,6 @@ import config
 from bot import Client
 import asyncio
 import re
-from youtube_scraper.scraper import scrape_html
 import aiohttp
 
 bot = Client(**config.bot_config)
@@ -23,24 +22,26 @@ async def on_connect():
 
 @bot.on_message(re.compile("youtube\.com|youtu\.be"))
 async def youtube_info(message):
-    return
-    link_re = re.compile(r"""(?:https?://)(?:www\.)?(?:(?:youtube\.com(?:/embed/|/watch/?\?(?:.*)v=))|youtu\.be/)([A-Za-z0-9-_]+)""")
+    link_re = re.compile(r"""(?:https?://)(?:www\.)?(?:(?:youtube\.com(?:/embed/|/watch/?\?(?:.*)v=))|youtu\.be/)(?P<id>[A-Za-z0-9-_]+)""")
     match = link_re.search(message.text)
     if not match:
         return
 
-    async with aiohttp.get(match.group(0)) as resp:
-        info = scrape_html(await resp.text())
-
-    reply = "YouTube: {i.title} by {i.poster} ({i.views} views)".format(i=info)
+    params = {
+        "id": match.group("id"),
+        "part": "contentDetails,statistics,snippet",
+        "key": config.youtube_api_key
+    }
+    async with aiohttp.get("https://www.googleapis.com/youtube/v3/videos", params=params) as resp:
+        if resp.status != 200:
+            return
+        info = await resp.json()
+    things = dict()
+    things.update(info["items"][0]["snippet"])
+    things.update(info["items"][0]["statistics"])
+    reply = "YouTube: {title} by {channelTitle} ({viewCount} views)".format(**things)
     await message.reply(reply)
 
-
-@bot.on_message()
-async def echo(message):
-    if not message.sender:
-        return
-    await message.reply(message.text)
 
 @bot.on_message("!quit")
 async def quit(message):

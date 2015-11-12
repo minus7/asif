@@ -31,6 +31,9 @@ class User(metaclass=LoggerMetaClass):
     async def message(self, text: str, notice: bool=False) -> None:
         await self.client.message(self.nick, text, notice=notice)
 
+    def __repr__(self):
+        return "<User {self.nick}!{self.user}@{self.host}>".format(self=self)
+
 
 class Channel(metaclass=LoggerMetaClass):
 
@@ -44,6 +47,9 @@ class Channel(metaclass=LoggerMetaClass):
 
     async def message(self, text: str, notice: bool=False) -> None:
         await self.client.message(self.name, text, notice=notice)
+
+    def __repr__(self):
+        return "<Channel {self.name}>".format(self=self)
 
 
 class Message(metaclass=LoggerMetaClass):
@@ -60,6 +66,9 @@ class Message(metaclass=LoggerMetaClass):
             notice = self.notice
         recipient = self.recipient if isinstance(self.recipient, Channel) else self.sender
         await recipient.message(text, notice=notice)
+
+    def __repr__(self):
+        return "<Message sender={self.sender} recipient={self.recipient}>".format(self=self)
 
 
 class Client(metaclass=LoggerMetaClass):
@@ -256,7 +265,7 @@ class Client(metaclass=LoggerMetaClass):
 
             if msg.args[0] in ("PRIVMSG", "NOTICE"):
                 sender = self._resolve_sender(msg.prefix)
-                recipient = self._resolve_recipient(msg.args[0])
+                recipient = self._resolve_recipient(msg.args[1])
                 message = Message(sender, recipient, msg.rest, (msg.args[0] == "NOTICE"))
                 await self._handle_on_message(message)
                 continue
@@ -265,7 +274,7 @@ class Client(metaclass=LoggerMetaClass):
 
         self._log.info("Connection closed, exiting")
 
-    def _bg(self, coro: coroutine):
+    def _bg(self, coro: coroutine) -> asyncio.Task:
         """Run coro in background, log errors"""
         async def runner():
             try:
@@ -273,7 +282,7 @@ class Client(metaclass=LoggerMetaClass):
             except:
                 self._log.exception("async: Coroutine raised exception")
                 raise  # reraise for the heck of it
-        asyncio.ensure_future(runner())
+        return asyncio.ensure_future(runner())
 
     async def _handle_special(self, msg: IrcMessage) -> bool:
         if msg.args[0] == "PING":
