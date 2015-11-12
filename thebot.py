@@ -14,7 +14,7 @@ bot = Client(**config.bot_config)
 # helpch = bot.join("#help")
 
 
-@bot.on_connect()
+@bot.on_connected()
 async def on_connect():
     # await bot.send("NickServ", "IDENTIFY asdf")
     # await bot.await_message("HostServ", "vhost.*activated", notice=True)
@@ -24,8 +24,7 @@ async def on_connect():
 @bot.on_message(re.compile("youtube\.com|youtu\.be"))
 async def youtube_info(message):
     return
-    link_re = re.compile(
-        r"""(?:https?://)(?:www\.)?(?:(?:youtube\.com(?:/embed/|/watch/?\?(?:.*)v=))|youtu\.be/)([A-Za-z0-9-_]+)""")
+    link_re = re.compile(r"""(?:https?://)(?:www\.)?(?:(?:youtube\.com(?:/embed/|/watch/?\?(?:.*)v=))|youtu\.be/)([A-Za-z0-9-_]+)""")
     match = link_re.search(message.text)
     if not match:
         return
@@ -39,7 +38,13 @@ async def youtube_info(message):
 
 @bot.on_message()
 async def echo(message):
-    pass  # await message.reply(message.text)
+    if not message.sender:
+        return
+    await message.reply(message.text)
+
+@bot.on_message("!quit")
+async def quit(message):
+    await bot.quit("Goodbye!")
 
 
 loop = asyncio.get_event_loop()
