@@ -1,0 +1,17 @@
+bot_config = {
+    "host": "localhost",
+    "port": 6667,
+    "user": "bot",
+    "realname": "The Bot",
+    "nick": "TheBot",
+}
+
+import logging
+
+fmt = logging.Formatter("[%(asctime)s] %(levelname)s: %(filename)s:%(funcName)s(%(lineno)s): %(message)s")
+logger = logging.getLogger("bot")
+logger.setLevel(logging.DEBUG)
+
+sh = logging.StreamHandler()
+sh.setFormatter(fmt)
+logger.addHandler(sh)
