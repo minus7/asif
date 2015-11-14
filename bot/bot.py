@@ -403,8 +403,8 @@ class Client(metaclass=LoggerMetaClass):
                 self._bg(mh.handler(message))
 
     async def _connect(self) -> None:
-        await self._send(cc.NICK, self.nick)
-        await self._send(cc.USER, self.user, 0, "*", rest=self.realname)
+        nick = self._send(cc.NICK, self.nick)
+        user = self._send(cc.USER, self.user, 0, "*", rest=self.realname)
 
         @self.on_command(cc.ERR_NICKNAMEINUSE)
         async def nick_in_use(msg):
@@ -420,8 +420,12 @@ class Client(metaclass=LoggerMetaClass):
                     modes, _, prefixes = value[1:].partition(")")
                     self._prefix_map = dict(zip(prefixes, modes))
 
+        end_motd = self.await_command(cc.RPL_ENDOFMOTD)
+
+        await nick
+        await user
         self._log.debug("Waiting for the end of the MOTD")
-        await self.await_command(cc.RPL_ENDOFMOTD)
+        await end_motd
         self._log.debug("End of the MOTD found, running handlers")
 
         # `cc.RPL_ISUPPORT` is either done or not available
