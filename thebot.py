@@ -3,6 +3,8 @@
 
 import config
 from bot import Client, Channel
+from misc import async_input
+
 import asyncio
 import re
 import aiohttp
@@ -15,8 +17,9 @@ bot = Client(**config.bot_config)
 
 @bot.on_connected()
 async def on_connect():
-    # await bot.send("NickServ", "IDENTIFY asdf")
-    # await bot.await_message("HostServ", "vhost.*activated", notice=True)
+    if hasattr(config, "nickserv_password"):
+        await bot.message("NickServ", "IDENTIFY {}".format(config.nickserv_password))
+        await bot.await_message(sender="HostServ", message=re.compile("vhost.*activated"))
     await bot.join("#minus")
 
 
@@ -60,5 +63,16 @@ async def part(message):
 async def hello(channel):
     await channel.message("Hello {}!".format(channel.name))
 
+
+async def cli_input():
+    while True:
+        inp = await async_input("> ")
+        print("Got input:", inp)
+        msg = bot._parsemsg(inp)
+        print("Decoded message: {}".format(msg))
+        await bot._send(*msg.args, prefix=msg.prefix, rest=msg.rest)
+        print("Message sent!")
+
+bot._bg(cli_input())
 loop = asyncio.get_event_loop()
 loop.run_until_complete(bot.run())

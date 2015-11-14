@@ -128,8 +128,8 @@ class Client(metaclass=LoggerMetaClass):
     MessageHandler = namedtuple("MessageHandler", ("matcher", "handler"))
 
     def on_message(self, message: Union[str, RegEx]=None, channel: Union[str, RegEx]=None,
-                   sender: Union[str, RegEx]=None, matcher: Callable[[Message], None]=None
-                   ) -> Callable[[Callable], Callable]:
+                   sender: Union[str, RegEx]=None, matcher: Callable[[Message], None]=None,
+                   notice: bool=None) -> Callable[[Callable], Callable]:
         """
 
         Register a handler that's called after a message is received (PRIVMSG, NOTICE).
@@ -142,6 +142,11 @@ class Client(metaclass=LoggerMetaClass):
                         Gets the `Message` as parameter
         """
         matchers = []
+
+        if notice is not None:
+            def notice_matcher(msg: Message) -> bool:
+                return msg.notice == notice
+            matchers.append(notice_matcher)
 
         if matcher:
             matchers.append(matcher)
@@ -205,10 +210,27 @@ class Client(metaclass=LoggerMetaClass):
         def decorator(fn: Callable[[Message], None]) -> Callable[[Message], None]:
             mh = self.MessageHandler(message_matcher, fn)
             self._on_message_handlers.append(mh)
-            self._log.debug("Added message handler {}".format(mh))
+            self._log.debug("Added message handler {} with matchers {}".format(mh, matchers))
             return fn
 
         return decorator
+
+    def remove_message_handler(self, handler: Callable[[Message], None]) -> None:
+        for mh in self._on_message_handlers:
+            if mh.handler == handler:
+                self._log.debug("Removing message handler {}".format(mh))
+                self._on_message_handlers.remove(mh)
+
+    async def await_message(self, *args, **kwargs) -> Message:
+        """
+        Block until a message matches. See `on_message`
+        """
+        fut = asyncio.Future()
+        @self.on_message(*args, **kwargs)
+        async def handler(message):
+            self.remove_message_handler(handler)
+            fut.set_result(message)
+        return await fut
 
     IrcMessage = namedtuple("IrcMessage", ("prefix", "args", "rest"))
 
@@ -259,12 +281,12 @@ class Client(metaclass=LoggerMetaClass):
                 self._log.debug("Removing command handler {}".format(ch))
                 self._on_command_handlers.remove(ch)
 
-    async def await_command(self, *args: Sequence[str], rest: str=None) -> IrcMessage:
+    async def await_command(self, *args, **kwargs) -> IrcMessage:
         """
         Block until a command matches. See `on_command`
         """
         fut = asyncio.Future()
-        @self.on_command(*args, rest=rest)
+        @self.on_command(*args, **kwargs)
         async def handler(msg):
             self.remove_command_handler(handler)
             fut.set_result(msg)
@@ -272,6 +294,8 @@ class Client(metaclass=LoggerMetaClass):
 
     def _parsemsg(self, msg: str) -> IrcMessage:
         # adopted from twisted/words/protocols/irc.py
+        if not msg:
+            return
         prefix = None
         rest = None
         if msg[0] == ":":
@@ -314,7 +338,7 @@ class Client(metaclass=LoggerMetaClass):
 
         msg = self._parsemsg(line)
 
-        if await self._handle_special(msg):
+        if msg and await self._handle_special(msg):
             return
 
         return msg
@@ -405,13 +429,13 @@ class Client(metaclass=LoggerMetaClass):
         # Nick chosen by now
         self.remove_command_handler(nick_in_use)
 
+        self._connected = True
+
         for handler in self._on_connected_handlers:
             try:
                 await handler()
             except:
                 self._log.exception("Connect handler {} raised exception".format(handler))
-
-        self._connected = True
 
     def _resolve_sender(self, prefix: str) -> User:
         if "!" in prefix and "@" in prefix:
