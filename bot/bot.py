@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # vim: set ts=4 sw=4 noet:
 
+from . import command_codes as cc
+
 import asyncio
 from collections import namedtuple
 import logging
@@ -28,6 +30,8 @@ class User(metaclass=LoggerMetaClass):
         self.user, _, self.host = rest.partition("@")
         self.client = client
 
+        self._log.debug("Created {}".format(self))
+
     async def message(self, text: str, notice: bool=False) -> None:
         await self.client.message(self.nick, text, notice=notice)
 
@@ -42,6 +46,8 @@ class Channel(metaclass=LoggerMetaClass):
         self.client = client
         self.users = []
 
+        self._log.debug("Created {}".format(self))
+
     def __contains__(self, other: User) -> bool:
         return other in self.users
 
@@ -49,13 +55,15 @@ class Channel(metaclass=LoggerMetaClass):
         await self.client.message(self.name, text, notice=notice)
 
     def __repr__(self):
-        return "<Channel {self.name}>".format(self=self)
+        return "<Channel {self.name} users={num_users}>" \
+            .format(self=self, num_users=len(self.users))
 
 
 class Message(metaclass=LoggerMetaClass):
 
-    def __init__(self, sender: [User, Channel], recipient: [
-                 User, Channel], text: str, notice: bool=False):
+    def __init__(self, sender: Union[User, Channel],
+                 recipient: Union[User, Channel],
+                 text: str, notice: bool=False):
         self.sender = sender
         self.recipient = recipient
         self.text = text
@@ -88,7 +96,8 @@ class Client(metaclass=LoggerMetaClass):
         self._users = {}
         self._channels = {}
         self._on_command_handlers = []
-        self._channel_types = ""
+        # default chan types in case the server doesn't support `cc.RPL_ISUPPORT`
+        self._channel_types = "#&"
         self._connected = False
 
     def on_connected(self) -> Callable[[Callable], Callable]:
@@ -299,14 +308,15 @@ class Client(metaclass=LoggerMetaClass):
         await self.send("NICK", self.nick)
         await self.send("USER", self.user, "0", "*", rest=self.realname)
 
-        @self.on_command("005")  # Feature list
+        @self.on_command(cc.RPL_ISUPPORT)  # Feature list
         async def feature_list(msg):
             for feature in filter(lambda arg: arg.startswith("CHANTYPES="), msg.args):
                 self._channel_types = feature.partition("=")[2]
-                self.remove_command_handler(feature_list)
 
         self._log.debug("Waiting for the end of the MOTD")
-        await self.await_command("376")  # End of MOTD
+        await self.await_command(cc.RPL_ENDOFMOTD)
+        # `cc.RPL_ISUPPORT` is either done or not availalbe
+        self.remove_command_handler(feature_list)
         self._log.debug("End of the MOTD found, running handlers")
 
         for handler in self._on_connected_handlers:
