@@ -92,6 +92,7 @@ class Client(metaclass=LoggerMetaClass):
         self.encoding = encoding
 
         self._on_connected_handlers = []
+        self._on_disconnected_handlers = []
         self._on_message_handlers = []
         self._users = {}
         self._channels = {}
@@ -103,6 +104,13 @@ class Client(metaclass=LoggerMetaClass):
     def on_connected(self) -> Callable[[Callable], Callable]:
         def decorator(fn: Callable[[], None]):
             self._on_connected_handlers.append(fn)
+            return fn
+
+        return decorator
+
+    def on_disconnected(self) -> Callable[[Callable], Callable]:
+        def decorator(fn: Callable[[str], None]):
+            self._on_disconnected_handlers.append(fn)
             return fn
 
         return decorator
@@ -217,7 +225,7 @@ class Client(metaclass=LoggerMetaClass):
         msg = ""
         if prefix:
             msg += ":{} ".format(prefix)
-        msg += " ".join(args)
+        msg += " ".join((str(arg) for arg in args))
         if rest:
             msg += " :{}".format(rest)
         return msg
@@ -228,7 +236,7 @@ class Client(metaclass=LoggerMetaClass):
         self._writer.write(msg.encode(self.encoding) + b"\r\n")
 
     async def message(self, recipient: str, text: str, notice: bool=False) -> None:
-        await self.send("PRIVMSG" if not notice else "NOTICE", recipient, rest=text)
+        await self.send(cc.PRIVMSG if not notice else cc.NOTICE, recipient, rest=text)
 
     async def _get_message(self) -> IrcMessage:
         line = await self._reader.readline()
@@ -272,10 +280,10 @@ class Client(metaclass=LoggerMetaClass):
             if not self._connected:
                 continue
 
-            if msg.args[0] in ("PRIVMSG", "NOTICE"):
+            if msg.args[0] in (cc.PRIVMSG, cc.NOTICE):
                 sender = self._resolve_sender(msg.prefix)
                 recipient = self._resolve_recipient(msg.args[1])
-                message = Message(sender, recipient, msg.rest, (msg.args[0] == "NOTICE"))
+                message = Message(sender, recipient, msg.rest, (msg.args[0] == cc.NOTICE))
                 await self._handle_on_message(message)
                 continue
 
@@ -294,8 +302,8 @@ class Client(metaclass=LoggerMetaClass):
         return asyncio.ensure_future(runner())
 
     async def _handle_special(self, msg: IrcMessage) -> bool:
-        if msg.args[0] == "PING":
-            await self.send("PONG", rest=msg.rest)
+        if msg.args[0] == cc.PING:
+            await self.send(cc.PONG, rest=msg.rest)
             return True
         return False
 
@@ -305,8 +313,8 @@ class Client(metaclass=LoggerMetaClass):
                 await mh.handler(message)
 
     async def _connect(self) -> None:
-        await self.send("NICK", self.nick)
-        await self.send("USER", self.user, "0", "*", rest=self.realname)
+        await self.send(cc.NICK, self.nick)
+        await self.send(cc.USER, self.user, 0, "*", rest=self.realname)
 
         @self.on_command(cc.RPL_ISUPPORT)  # Feature list
         async def feature_list(msg):
@@ -315,9 +323,9 @@ class Client(metaclass=LoggerMetaClass):
 
         self._log.debug("Waiting for the end of the MOTD")
         await self.await_command(cc.RPL_ENDOFMOTD)
+        self._log.debug("End of the MOTD found, running handlers")
         # `cc.RPL_ISUPPORT` is either done or not availalbe
         self.remove_command_handler(feature_list)
-        self._log.debug("End of the MOTD found, running handlers")
 
         for handler in self._on_connected_handlers:
             try:
@@ -348,10 +356,15 @@ class Client(metaclass=LoggerMetaClass):
         return self.get_user(recipient)
 
     async def join(self, channel: str) -> Channel:
-        await self.send("JOIN", channel)
+        await self.send(cc.JOIN, channel)
         self._log.debug("Joining channel {}".format(channel))
-        await self.await_command("JOIN", rest=channel)
-        self._log.info("Joined channel {}".format(channel))
+        await self.await_command(cc.JOIN, rest=channel)
+        return Channel(channel, self)
 
     async def quit(self, reason: str=None) -> Channel:
-        await self.send("QUIT", rest=reason)
+        for handler in self._on_disconnected_handlers:
+            try:
+                await handler(reason)
+            except:
+                self._log.exception("Connect handler {} raised exception".format(handler))
+        await self.send(cc.QUIT, rest=reason)

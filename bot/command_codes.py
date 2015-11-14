@@ -140,4 +140,16 @@ RPL_UNLOADEDMODULE              = "973"  # insp-specific
 ERR_CANTLOADMODULE              = "974"  # insp-specific
 RPL_LOADEDMODULE                = "975"  # insp-specific
 
-#
+# String commands, for convenience
+NICK =                          "NICK"
+USER =                          "USER"
+JOIN =                          "JOIN"
+PART =                          "PART"
+QUIT =                          "QUIT"
+MODE =                          "MODE"
+PING =                          "PING"
+PONG =                          "PONG"
+PRIVMSG =                       "PRIVMSG"
+NOTICE =                        "NOTICE"
+TOPIC =                         "TOPIC"
+KICK =                          "KICK"
