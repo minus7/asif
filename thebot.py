@@ -2,7 +2,7 @@
 # vim: set ts=4 sw=4 noet:
 
 import config
-from bot import Client
+from bot import Client, Channel
 import asyncio
 import re
 import aiohttp
@@ -47,6 +47,18 @@ async def youtube_info(message):
 async def quit(message):
     await bot.quit("Goodbye!")
 
+@bot.on_message(matcher=lambda msg: msg.text.startswith("!join"))
+async def join(message):
+    await bot.join(message.text.partition(" ")[2])
+
+@bot.on_message(matcher=lambda msg: isinstance(msg.recipient, Channel) and msg.text.startswith("!part"))
+async def part(message):
+    await message.recipient.part()
+    await bot.get_user("minus").message("Left {}".format(message.recipient))
+
+@bot.on_join()
+async def hello(channel):
+    await channel.message("Hello {}!".format(channel.name))
 
 loop = asyncio.get_event_loop()
 loop.run_until_complete(bot.run())

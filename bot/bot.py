@@ -7,7 +7,7 @@ import asyncio
 from collections import namedtuple
 import logging
 import re
-from typing import List, Callable, Union, Sequence
+from typing import List, Callable, Union, Sequence, Any
 from types import coroutine
 
 
@@ -25,9 +25,9 @@ RegEx = type(re.compile(""))
 
 class User(metaclass=LoggerMetaClass):
 
-    def __init__(self, prefix: str, client: 'Client'):
-        self.nick, _, rest = prefix.partition("!")
-        self.user, _, self.host = rest.partition("@")
+    def __init__(self, nick: str, client: 'Client', hostmask: str=None):
+        self.nick = nick
+        self.hostmask = hostmask
         self.client = client
 
         self._log.debug("Created {}".format(self))
@@ -36,7 +36,7 @@ class User(metaclass=LoggerMetaClass):
         await self.client.message(self.nick, text, notice=notice)
 
     def __repr__(self):
-        return "<User {self.nick}!{self.user}@{self.host}>".format(self=self)
+        return "<User {self.nick}@{self.hostmask}>".format(self=self)
 
 
 class Channel(metaclass=LoggerMetaClass):
@@ -44,7 +44,7 @@ class Channel(metaclass=LoggerMetaClass):
     def __init__(self, name: str, client: 'Client'):
         self.name = name
         self.client = client
-        self.users = []
+        self.users = set()
 
         self._log.debug("Created {}".format(self))
 
@@ -53,6 +53,10 @@ class Channel(metaclass=LoggerMetaClass):
 
     async def message(self, text: str, notice: bool=False) -> None:
         await self.client.message(self.name, text, notice=notice)
+
+    async def part(self, reason: str=None) -> None:
+        await self.client._send(cc.PART, self.name, rest=reason)
+        await self.client.await_command(cc.PART, self.name)
 
     def __repr__(self):
         return "<Channel {self.name} users={num_users}>" \
@@ -97,9 +101,15 @@ class Client(metaclass=LoggerMetaClass):
         self._users = {}
         self._channels = {}
         self._on_command_handlers = []
-        # default chan types in case the server doesn't support `cc.RPL_ISUPPORT`
+        self._on_join_handlers = []
+        # default chan types, can be overridden by `cc.RPL_ISUPPORT` CHANTYPES
         self._channel_types = "#&"
+        # default user mode prefixes, can be overridden by `cc.RPL_ISUPPORT` PREFIX
+        self._prefix_map = {"@": "o", "+": "v"}
         self._connected = False
+
+        # Register on_join handler
+        self.on_command(cc.JOIN)(self._on_join)
 
     def on_connected(self) -> Callable[[Callable], Callable]:
         def decorator(fn: Callable[[], None]):
@@ -120,6 +130,17 @@ class Client(metaclass=LoggerMetaClass):
     def on_message(self, message: Union[str, RegEx]=None, channel: Union[str, RegEx]=None,
                    sender: Union[str, RegEx]=None, matcher: Callable[[Message], None]=None
                    ) -> Callable[[Callable], Callable]:
+        """
+
+        Register a handler that's called after a message is received (PRIVMSG, NOTICE).
+        The handler is called with the `Message` as argument, must be a coroutine
+        and is run non-blocking.
+        :param message: message filter, string (exact match) or compiled regex object
+        :param channel: channel filter, string (exact match) or compiled regex object
+        :param sender: sender filter, string (exact match) or compiled regex object
+        :param matcher: test function, return true to accept the message.
+                        Gets the `Message` as parameter
+        """
         if not matcher:
             matchers = []
 
@@ -145,13 +166,13 @@ class Client(metaclass=LoggerMetaClass):
                 pass
             elif isinstance(sender, str):
                 def matcher(msg: Message) -> bool:
-                    return msg.sender == sender
+                    return msg.sender.name == sender
 
                 matchers.append(matcher)
             elif hasattr(sender, "search"):
                 # regex or so
                 def matcher(msg: Message) -> bool:
-                    return message.search(msg.sender) is not None
+                    return sender.search(msg.sender.name) is not None
 
                 matchers.append(matcher)
             else:
@@ -162,13 +183,15 @@ class Client(metaclass=LoggerMetaClass):
                 pass
             elif isinstance(channel, str):
                 def matcher(msg: Message) -> bool:
-                    return msg.recipient == channel
+                    return isinstance(msg.recipient, Channel) \
+                           and msg.recipient.name == channel
 
                 matchers.append(matcher)
             elif hasattr(channel, "search"):
                 # regex or so
                 def matcher(msg: Message) -> bool:
-                    return message.search(msg.recipient) is not None
+                    return isinstance(msg.recipient, Channel) \
+                           and channel.search(msg.recipient.name) is not None
 
                 matchers.append(matcher)
             else:
@@ -178,19 +201,52 @@ class Client(metaclass=LoggerMetaClass):
                 return all(m(msg) for m in matchers)
 
         def decorator(fn: Callable[[Message], None]) -> Callable[[Message], None]:
-            handler = self.MessageHandler(matcher, fn)
-            self._on_message_handlers.append(handler)
+            mh = self.MessageHandler(matcher, fn)
+            self._on_message_handlers.append(mh)
+            self._log.debug("Added message handler {}".format(mh))
             return fn
 
         return decorator
 
     IrcMessage = namedtuple("IrcMessage", ("prefix", "args", "rest"))
 
+    JoinHandler = namedtuple("JoinHandler", ("channel", "handler"))
+
+    def on_join(self, channel: str=None) -> Callable[[Callable], Callable]:
+        """
+        Register a handler that's called after a channel is joined.
+        The handler is called with the `Channel` as argument, must be a coroutine
+        and is run non-blocking.
+        :param channel: channel to look out for or `None` for all channels
+        """
+        def decorator(fn: Callable[[self.IrcMessage], None]):
+            jh = self.JoinHandler(channel, fn)
+            self._on_join_handlers.append(jh)
+            self._log.debug("Added join handler {}".format(jh))
+            return fn
+
+        return decorator
+
+    def remove_join_handler(self, handler: Callable[[Channel], None]) -> None:
+        for jh in self._on_join_handlers:
+            if jh.handler == handler:
+                self._log.debug("Removing join handler {}".format(jh))
+                self._on_join_handlers.remove(jh)
+
     CommandHandler = namedtuple("CommandHandler", ("args", "rest", "handler"))
 
     def on_command(self, *args: Sequence[str], rest: str=None) -> Callable[[Callable], Callable]:
+        """
+        Register a handler that's called when (the beginning of) a `IrcMessage` matches.
+        The handler is called with the `IrcMessage` as argument, must be a coroutine
+        and is run blocking, i.e. you cannot use `await_command` in it!
+        :param args: commands args that must match (the actual command is the first arg)
+        :param rest: match the rest (after the " :") of the `IrcMessage`
+        """
         def decorator(fn: Callable[[self.IrcMessage], None]):
-            self._on_command_handlers.append(self.CommandHandler(args, rest, fn))
+            ch = self.CommandHandler(args, rest, fn)
+            self._on_command_handlers.append(ch)
+            self._log.debug("Added command handler {}".format(ch))
             return fn
 
         return decorator
@@ -198,9 +254,13 @@ class Client(metaclass=LoggerMetaClass):
     def remove_command_handler(self, handler: Callable[[IrcMessage], None]) -> None:
         for ch in self._on_command_handlers:
             if ch.handler == handler:
+                self._log.debug("Removing command handler {}".format(ch))
                 self._on_command_handlers.remove(ch)
 
     async def await_command(self, *args: Sequence[str], rest: str=None) -> IrcMessage:
+        """
+        Block until a command matches. See `on_command`
+        """
         fut = asyncio.Future()
         @self.on_command(*args, rest=rest)
         async def handler(msg):
@@ -208,7 +268,7 @@ class Client(metaclass=LoggerMetaClass):
             fut.set_result(msg)
         return await fut
 
-    def parsemsg(self, msg: str) -> IrcMessage:
+    def _parsemsg(self, msg: str) -> IrcMessage:
         # adopted from twisted/words/protocols/irc.py
         prefix = None
         rest = None
@@ -221,7 +281,7 @@ class Client(metaclass=LoggerMetaClass):
             args = msg.split()
         return self.IrcMessage(prefix, tuple(args), rest)
 
-    def buildmsg(self, *args: List[str], prefix: str=None, rest: str=None) -> str:
+    def _buildmsg(self, *args: List[str], prefix: str=None, rest: str=None) -> str:
         msg = ""
         if prefix:
             msg += ":{} ".format(prefix)
@@ -230,13 +290,16 @@ class Client(metaclass=LoggerMetaClass):
             msg += " :{}".format(rest)
         return msg
 
-    async def send(self, *args: List[str], prefix: str=None, rest: str=None) -> None:
-        msg = self.buildmsg(*args, prefix=prefix, rest=rest)
+    async def _send(self, *args: List[Any], prefix: str=None, rest: str=None) -> None:
+        msg = self._buildmsg(*args, prefix=prefix, rest=rest)
         self._log.debug("<- {}".format(msg))
         self._writer.write(msg.encode(self.encoding) + b"\r\n")
 
     async def message(self, recipient: str, text: str, notice: bool=False) -> None:
-        await self.send(cc.PRIVMSG if not notice else cc.NOTICE, recipient, rest=text)
+        """
+        Lower level messaging function used by User and Channel
+        """
+        await self._send(cc.PRIVMSG if not notice else cc.NOTICE, recipient, rest=text)
 
     async def _get_message(self) -> IrcMessage:
         line = await self._reader.readline()
@@ -247,7 +310,7 @@ class Client(metaclass=LoggerMetaClass):
 
         self._log.debug("-> {}".format(line))
 
-        msg = self.parsemsg(line)
+        msg = self._parsemsg(line)
 
         if await self._handle_special(msg):
             return
@@ -273,9 +336,9 @@ class Client(metaclass=LoggerMetaClass):
 
             for ch in self._on_command_handlers:
                 args = msg.args[:len(ch.args)]
-                self._log.debug("Evaluating command handler {} with input {} rest={}".format(ch, args, msg.rest))
                 if ch.args == args and (not ch.rest or ch.rest == msg.rest):
-                    self._bg(ch.handler(msg))
+                    self._log.debug("Calling command handler {} with input {}".format(ch, msg))
+                    await ch.handler(msg)
 
             if not self._connected:
                 continue
@@ -289,6 +352,8 @@ class Client(metaclass=LoggerMetaClass):
 
             # self._log.info("Unhandled command: {} {}".format(command, kwargs))
 
+        self._writer.close()
+
         self._log.info("Connection closed, exiting")
 
     def _bg(self, coro: coroutine) -> asyncio.Task:
@@ -298,33 +363,37 @@ class Client(metaclass=LoggerMetaClass):
                 await coro
             except:
                 self._log.exception("async: Coroutine raised exception")
-                raise  # reraise for the heck of it
         return asyncio.ensure_future(runner())
 
     async def _handle_special(self, msg: IrcMessage) -> bool:
         if msg.args[0] == cc.PING:
-            await self.send(cc.PONG, rest=msg.rest)
+            await self._send(cc.PONG, rest=msg.rest)
             return True
         return False
 
     async def _handle_on_message(self, message: Message) -> None:
         for mh in self._on_message_handlers:
             if mh.matcher(message):
-                await mh.handler(message)
+                self._bg(mh.handler(message))
 
     async def _connect(self) -> None:
-        await self.send(cc.NICK, self.nick)
-        await self.send(cc.USER, self.user, 0, "*", rest=self.realname)
+        await self._send(cc.NICK, self.nick)
+        await self._send(cc.USER, self.user, 0, "*", rest=self.realname)
 
         @self.on_command(cc.RPL_ISUPPORT)  # Feature list
         async def feature_list(msg):
-            for feature in filter(lambda arg: arg.startswith("CHANTYPES="), msg.args):
-                self._channel_types = feature.partition("=")[2]
+            for feature, _, value in map(lambda arg: arg.partition("="), msg.args):
+                if feature == "CHANTYPES":  # CHANTYPES=#&
+                    self._channel_types = value
+                if feature == "PREFIX":  # PREFIX=(ov)@+
+                    modes, _, prefixes = value[1:].partition(")")
+                    self._prefix_map = dict(zip(prefixes, modes))
 
         self._log.debug("Waiting for the end of the MOTD")
         await self.await_command(cc.RPL_ENDOFMOTD)
         self._log.debug("End of the MOTD found, running handlers")
-        # `cc.RPL_ISUPPORT` is either done or not availalbe
+
+        # `cc.RPL_ISUPPORT` is either done or not available
         self.remove_command_handler(feature_list)
 
         for handler in self._on_connected_handlers:
@@ -341,25 +410,68 @@ class Client(metaclass=LoggerMetaClass):
         # message probably sent by the server
         return None
 
-    def get_user(self, prefix: str) -> User:
-        nick = prefix
-        if "!" in prefix:
-            nick = prefix.partition("!")[0]
-        return self._users.setdefault(nick, User(prefix, self))
+    def get_user(self, nick: str) -> User:
+        """
+        :param nick: nick or prefix
+        """
+        hostmask = None
+        if "!" in nick:
+            nick, _, hostmask = nick.partition("!")
+        user = self._users.get(nick)
+        if not user:
+            self._users[nick] = user = User(nick, self, hostmask=hostmask)
+        return user
 
     def get_channel(self, channel: str) -> Channel:
-        return self._users.setdefault(channel, Channel(channel, self))
+        ch = self._channels.get(channel)
+        if not ch:
+            self._channels[channel] = ch = Channel(channel, self)
+        return ch
 
     def _resolve_recipient(self, recipient: str) -> Union[User, Channel]:
         if recipient[0] in self._channel_types:
             return self.get_channel(recipient)
         return self.get_user(recipient)
 
-    async def join(self, channel: str) -> Channel:
-        await self.send(cc.JOIN, channel)
+    async def join(self, channel: str, block: bool=False) -> Channel:
+        if block:
+            fut = asyncio.Future()
+            @self.on_join(channel)
+            async def waiter(channel_obj):
+                self.remove_join_handler(waiter)
+                fut.set_result(channel_obj)
+
         self._log.debug("Joining channel {}".format(channel))
-        await self.await_command(cc.JOIN, rest=channel)
-        return Channel(channel, self)
+        await self._send(cc.JOIN, channel)
+
+        if block:
+            return await fut
+
+    async def _on_join(self, msg):
+        channel = self.get_channel(msg.rest)
+        # TODO: make less ugly
+        @self.on_command(cc.RPL_NAMREPLY, self.nick, "=", channel.name)
+        @self.on_command(cc.RPL_NAMREPLY, self.nick, "*", channel.name)
+        @self.on_command(cc.RPL_NAMREPLY, self.nick, "@", channel.name)
+        async def gather_nicks(msg):
+            for nick in msg.rest.strip().split(" "):
+                mode = self._prefix_map.get(nick[0], None)
+                if mode:
+                    nick = nick[1:]
+                user = self.get_user(nick)
+                # TODO: channel_user = ChannelUser(user, mode, channel)
+                channel.users.add(user)
+
+        # register a handler for waiting because we can't block in a command handler
+        @self.on_command(cc.RPL_ENDOFNAMES, self.nick, channel.name)
+        async def join_finished(msg):
+            self.remove_command_handler(gather_nicks)
+            self.remove_command_handler(join_finished)
+            self._log.info("Joined channel {}".format(channel))
+
+            for jh in self._on_join_handlers:
+                if not jh.channel or jh.channel == channel.name:
+                    self._bg(jh.handler(channel))
 
     async def quit(self, reason: str=None) -> Channel:
         for handler in self._on_disconnected_handlers:
@@ -367,4 +479,4 @@ class Client(metaclass=LoggerMetaClass):
                 await handler(reason)
             except:
                 self._log.exception("Connect handler {} raised exception".format(handler))
-        await self.send(cc.QUIT, rest=reason)
+        await self._send(cc.QUIT, rest=reason)
