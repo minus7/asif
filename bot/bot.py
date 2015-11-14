@@ -26,17 +26,17 @@ RegEx = type(re.compile(""))
 class User(metaclass=LoggerMetaClass):
 
     def __init__(self, nick: str, client: 'Client', hostmask: str=None):
-        self.nick = nick
+        self.name = nick
         self.hostmask = hostmask
         self.client = client
 
         self._log.debug("Created {}".format(self))
 
     async def message(self, text: str, notice: bool=False) -> None:
-        await self.client.message(self.nick, text, notice=notice)
+        await self.client.message(self.name, text, notice=notice)
 
     def __repr__(self):
-        return "<User {self.nick}@{self.hostmask}>".format(self=self)
+        return "<User {self.name}@{self.hostmask}>".format(self=self)
 
 
 class Channel(metaclass=LoggerMetaClass):
@@ -141,67 +141,69 @@ class Client(metaclass=LoggerMetaClass):
         :param matcher: test function, return true to accept the message.
                         Gets the `Message` as parameter
         """
-        if not matcher:
-            matchers = []
+        matchers = []
 
-            # message
-            if message is None:
-                pass
-            elif isinstance(message, str):
-                def matcher(msg: Message) -> bool:
-                    return msg.text == message
+        if matcher:
+            matchers.append(matcher)
 
-                matchers.append(matcher)
-            elif hasattr(message, "search"):
-                # regex or so
-                def matcher(msg: Message) -> bool:
-                    return message.search(msg.text) is not None
-
-                matchers.append(matcher)
-            else:
-                raise ValueError("Don't know what to do with message={}".format(message))
-
-            # sender
-            if sender is None:
-                pass
-            elif isinstance(sender, str):
-                def matcher(msg: Message) -> bool:
-                    return msg.sender.name == sender
-
-                matchers.append(matcher)
-            elif hasattr(sender, "search"):
-                # regex or so
-                def matcher(msg: Message) -> bool:
-                    return sender.search(msg.sender.name) is not None
-
-                matchers.append(matcher)
-            else:
-                raise ValueError("Don't know what to do with sender={}".format(sender))
-
-            # channel
-            if channel is None:
-                pass
-            elif isinstance(channel, str):
-                def matcher(msg: Message) -> bool:
-                    return isinstance(msg.recipient, Channel) \
-                           and msg.recipient.name == channel
-
-                matchers.append(matcher)
-            elif hasattr(channel, "search"):
-                # regex or so
-                def matcher(msg: Message) -> bool:
-                    return isinstance(msg.recipient, Channel) \
-                           and channel.search(msg.recipient.name) is not None
-
-                matchers.append(matcher)
-            else:
-                raise ValueError("Don't know what to do with channel={}".format(channel))
-
+        # message
+        if message is None:
+            pass
+        elif isinstance(message, str):
             def matcher(msg: Message) -> bool:
-                return all(m(msg) for m in matchers)
+                return msg.text == message
+
+            matchers.append(matcher)
+        elif hasattr(message, "search"):
+            # regex or so
+            def matcher(msg: Message) -> bool:
+                return message.search(msg.text) is not None
+
+            matchers.append(matcher)
+        else:
+            raise ValueError("Don't know what to do with message={}".format(message))
+
+        # sender
+        if sender is None:
+            pass
+        elif isinstance(sender, str):
+            def matcher(msg: Message) -> bool:
+                return msg.sender.name == sender
+
+            matchers.append(matcher)
+        elif hasattr(sender, "search"):
+            # regex or so
+            def matcher(msg: Message) -> bool:
+                return sender.search(msg.sender.name) is not None
+
+            matchers.append(matcher)
+        else:
+            raise ValueError("Don't know what to do with sender={}".format(sender))
+
+        # channel
+        if channel is None:
+            pass
+        elif isinstance(channel, str):
+            def matcher(msg: Message) -> bool:
+                return isinstance(msg.recipient, Channel) \
+                       and msg.recipient.name == channel
+
+            matchers.append(matcher)
+        elif hasattr(channel, "search"):
+            # regex or so
+            def matcher(msg: Message) -> bool:
+                return isinstance(msg.recipient, Channel) \
+                       and channel.search(msg.recipient.name) is not None
+
+            matchers.append(matcher)
+        else:
+            raise ValueError("Don't know what to do with channel={}".format(channel))
+
+        def message_matcher(msg: Message) -> bool:
+            return all(m(msg) for m in matchers)
 
         def decorator(fn: Callable[[Message], None]) -> Callable[[Message], None]:
-            mh = self.MessageHandler(matcher, fn)
+            mh = self.MessageHandler(message_matcher, fn)
             self._on_message_handlers.append(mh)
             self._log.debug("Added message handler {}".format(mh))
             return fn
@@ -320,7 +322,7 @@ class Client(metaclass=LoggerMetaClass):
     async def run(self) -> None:
         self._reader, self._writer = await asyncio.open_connection(self.host, self.port)
 
-        asyncio.ensure_future(self._connect())
+        self._bg(self._connect())
 
         while not self._reader.at_eof():
 
@@ -380,7 +382,12 @@ class Client(metaclass=LoggerMetaClass):
         await self._send(cc.NICK, self.nick)
         await self._send(cc.USER, self.user, 0, "*", rest=self.realname)
 
-        @self.on_command(cc.RPL_ISUPPORT)  # Feature list
+        @self.on_command(cc.ERR_NICKNAMEINUSE)
+        async def nick_in_use(msg):
+            self.nick += "_"
+            await self._send(cc.NICK, self.nick)
+
+        @self.on_command(cc.RPL_ISUPPORT)
         async def feature_list(msg):
             for feature, _, value in map(lambda arg: arg.partition("="), msg.args):
                 if feature == "CHANTYPES":  # CHANTYPES=#&
@@ -395,6 +402,8 @@ class Client(metaclass=LoggerMetaClass):
 
         # `cc.RPL_ISUPPORT` is either done or not available
         self.remove_command_handler(feature_list)
+        # Nick chosen by now
+        self.remove_command_handler(nick_in_use)
 
         for handler in self._on_connected_handlers:
             try:
