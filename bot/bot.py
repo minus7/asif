@@ -48,15 +48,21 @@ class Channel(metaclass=LoggerMetaClass):
 
         self._log.debug("Created {}".format(self))
 
-    def __contains__(self, other: User) -> bool:
-        return other in self.users
+    def on_message(self, *args, **kwargs):
+        """
+        Convenience wrapper of `Client.on_message` pre-bound with `channel=self.name`.
+        """
+        kwargs["channel"] = self.name
+        return self.client.on_message(*args, **kwargs)
 
     async def message(self, text: str, notice: bool=False) -> None:
         await self.client.message(self.name, text, notice=notice)
 
-    async def part(self, reason: str=None) -> None:
-        await self.client._send(cc.PART, self.name, rest=reason)
-        await self.client.await_command(cc.PART, self.name)
+    async def part(self, reason: str=None, block: bool=False) -> None:
+        await self.client.part(self.name, reason=reason, block=block)
+
+    def __contains__(self, other: User) -> bool:
+        return other in self.users
 
     def __repr__(self):
         return "<Channel {self.name} users={num_users}>" \
@@ -484,7 +490,7 @@ class Client(metaclass=LoggerMetaClass):
         if block:
             return await fut
 
-    async def _on_join(self, msg):
+    async def _on_join(self, msg: IrcMessage) -> None:
         channel = self.get_channel(msg.rest)
         # TODO: make less ugly
         @self.on_command(cc.RPL_NAMREPLY, self.nick, "=", channel.name)
@@ -509,6 +515,13 @@ class Client(metaclass=LoggerMetaClass):
             for jh in self._on_join_handlers:
                 if not jh.channel or jh.channel == channel.name:
                     self._bg(jh.handler(channel))
+
+    async def part(self, channel: str, reason: str=None, block: bool=None) -> None:
+        if block:
+            part_done = self.client.await_command(cc.PART, channel)
+        await self.client._send(cc.PART, channel, rest=reason)
+        if block:
+            await part_done
 
     async def quit(self, reason: str=None) -> Channel:
         for handler in self._on_disconnected_handlers:
