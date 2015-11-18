@@ -35,6 +35,12 @@ class User(metaclass=LoggerMetaClass):
     async def message(self, text: str, notice: bool=False) -> None:
         await self.client.message(self.name, text, notice=notice)
 
+    def __eq__(self, other: 'User') -> bool:
+        return self.name == other.name
+
+    def __hash__(self):
+        return hash(self.name)
+
     def __repr__(self):
         return "<User {self.name}!{self.hostmask}>".format(self=self)
 
@@ -63,6 +69,12 @@ class Channel(metaclass=LoggerMetaClass):
 
     def __contains__(self, other: User) -> bool:
         return other in self.users
+
+    def __eq__(self, other: 'Channel') -> bool:
+        return self.name == other.name
+
+    def __hash__(self):
+        return hash(self.name)
 
     def __repr__(self):
         return "<Channel {self.name} users={num_users}>" \
@@ -169,7 +181,9 @@ class Client(metaclass=LoggerMetaClass):
         elif hasattr(message, "search"):
             # regex or so
             def matcher(msg: Message) -> bool:
-                return message.search(msg.text) is not None
+                m = message.search(msg.text)
+                if m is not None:
+                    return m.groupdict()
 
             matchers.append(matcher)
         else:
@@ -178,6 +192,11 @@ class Client(metaclass=LoggerMetaClass):
         # sender
         if sender is None:
             pass
+        elif isinstance(sender, User):
+            def matcher(msg: Message) -> bool:
+                return msg.sender == sender
+
+            matchers.append(matcher)
         elif isinstance(sender, str):
             def matcher(msg: Message) -> bool:
                 return msg.sender.name == sender
@@ -186,7 +205,9 @@ class Client(metaclass=LoggerMetaClass):
         elif hasattr(sender, "search"):
             # regex or so
             def matcher(msg: Message) -> bool:
-                return sender.search(msg.sender.name) is not None
+                m = sender.search(msg.sender.name)
+                if m is not None:
+                    return m.groupdict()
 
             matchers.append(matcher)
         else:
@@ -195,6 +216,12 @@ class Client(metaclass=LoggerMetaClass):
         # channel
         if channel is None:
             pass
+        elif isinstance(channel, Channel):
+            def matcher(msg: Message) -> bool:
+                return isinstance(msg.recipient, Channel) \
+                       and msg.recipient == channel
+
+            matchers.append(matcher)
         elif isinstance(channel, str):
             def matcher(msg: Message) -> bool:
                 return isinstance(msg.recipient, Channel) \
@@ -204,15 +231,27 @@ class Client(metaclass=LoggerMetaClass):
         elif hasattr(channel, "search"):
             # regex or so
             def matcher(msg: Message) -> bool:
-                return isinstance(msg.recipient, Channel) \
-                       and channel.search(msg.recipient.name) is not None
+                if not isinstance(msg.recipient, Channel):
+                    return
+                m = channel.search(msg.recipient.name)
+                if m is not None:
+                    return m.groupdict()
 
             matchers.append(matcher)
         else:
             raise ValueError("Don't know what to do with channel={}".format(channel))
 
         def message_matcher(msg: Message) -> bool:
-            return all(m(msg) for m in matchers)
+            fn_kwargs = {}
+            for m in matchers:
+                ret = m(msg)
+                # Internal matchers may return False or None to fail
+                if ret is None or ret is False:
+                    return
+                # If one returns a dict the values in it will be passed to the handler
+                if isinstance(ret, dict):
+                    fn_kwargs.update(ret)
+            return fn_kwargs
 
         def decorator(fn: Callable[[Message], None]) -> Callable[[Message], None]:
             mh = self.MessageHandler(message_matcher, fn)
@@ -235,8 +274,9 @@ class Client(metaclass=LoggerMetaClass):
         fut = asyncio.Future()
         @self.on_message(*args, **kwargs)
         async def handler(message):
-            self.remove_message_handler(handler)
             fut.set_result(message)
+        # remove handler when done or cancelled
+        fut.add_done_callback(lambda _: self.remove_message_handler(handler))
         return await fut
 
     IrcMessage = namedtuple("IrcMessage", ("prefix", "args", "rest"))
@@ -295,8 +335,9 @@ class Client(metaclass=LoggerMetaClass):
         fut = asyncio.Future()
         @self.on_command(*args, **kwargs)
         async def handler(msg):
-            self.remove_command_handler(handler)
             fut.set_result(msg)
+        # remove handler when done or cancelled
+        fut.add_done_callback(lambda _: self.remove_command_handler(handler))
         return await fut
 
     def _parsemsg(self, msg: str) -> IrcMessage:
@@ -406,8 +447,9 @@ class Client(metaclass=LoggerMetaClass):
 
     async def _handle_on_message(self, message: Message) -> None:
         for mh in self._on_message_handlers:
-            if mh.matcher(message):
-                self._bg(mh.handler(message))
+            match = mh.matcher(message)
+            if match is not None:
+                self._bg(mh.handler(message, **match))
 
     async def _connect(self) -> None:
         nick = self._send(cc.NICK, self.nick)
@@ -600,7 +642,7 @@ class Module(metaclass=LoggerMetaClass):
 
         self._log.debug("Cannot get channel {} now, returning proxy".format(name))
         proxy = self.ChannelProxy(name, self)
-        self._buffer_call(lambda: proxy._populate(self.client))
+        self._buffer_call(lambda: proxy._populate(self.client.get_channel(name)))
         return proxy
 
     def __getattr__(self, method):
