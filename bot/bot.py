@@ -36,7 +36,7 @@ class User(metaclass=LoggerMetaClass):
         await self.client.message(self.name, text, notice=notice)
 
     def __repr__(self):
-        return "<User {self.name}@{self.hostmask}>".format(self=self)
+        return "<User {self.name}!{self.hostmask}>".format(self=self)
 
 
 class Channel(metaclass=LoggerMetaClass):
@@ -113,6 +113,7 @@ class Client(metaclass=LoggerMetaClass):
         # default user mode prefixes, can be overridden by `cc.RPL_ISUPPORT` PREFIX
         self._prefix_map = {"@": "o", "+": "v"}
         self._connected = False
+        self._modules = []
 
         # Register on_join handler
         self.on_command(cc.JOIN)(self._on_join)
@@ -465,10 +466,10 @@ class Client(metaclass=LoggerMetaClass):
             self._users[nick] = user = User(nick, self, hostmask=hostmask)
         return user
 
-    def get_channel(self, channel: str) -> Channel:
-        ch = self._channels.get(channel)
+    def get_channel(self, name: str) -> Channel:
+        ch = self._channels.get(name)
         if not ch:
-            self._channels[channel] = ch = Channel(channel, self)
+            self._channels[name] = ch = Channel(name, self)
         return ch
 
     def _resolve_recipient(self, recipient: str) -> Union[User, Channel]:
@@ -530,3 +531,90 @@ class Client(metaclass=LoggerMetaClass):
             except:
                 self._log.exception("Connect handler {} raised exception".format(handler))
         await self._send(cc.QUIT, rest=reason)
+
+    def add_module(self, module: 'Module'):
+        self._modules.append(module)
+        module._populate(self)
+
+
+class Module(metaclass=LoggerMetaClass):
+    class ChannelProxy(metaclass=LoggerMetaClass):
+        def __init__(self, name: str, module: 'Module'):
+            self.name = name
+            self._module = module
+            self._channel = None
+            self._buffered_calls = []
+
+        def _populate(self, channel):
+            """
+            Populate proxy with the real channel when available
+            """
+            self._channel = channel
+            for fn in self._buffered_calls:
+                self._log.debug("Executing buffered call {}".format(fn))
+                fn()
+
+        def _buffer_call(self, callable):
+            self._buffered_calls.append(callable)
+
+        def __getattr__(self, method):
+            if self._channel:
+                return getattr(self._channel, method)
+            else:
+                if not method.startswith("on_"):
+                    raise AttributeError(method)
+
+                def on_anything(*args, **kwargs):
+                    def decorator(fn):
+                        self._log.debug("Cannot execute method {}(*{}, **{}) now, buffering".format(method, args, kwargs))
+                        self._buffer_call(lambda: getattr(self._channel, method)(*args, **kwargs)(fn))
+                        return fn
+                    return decorator
+
+                return on_anything
+
+    def __init__(self, name: str):
+        self.module_name = name
+
+        # set by the Client
+        self.client = None
+        """:type: Client"""
+
+        self._buffered_calls = []
+
+    def _populate(self, client):
+        """
+        Populate module with the client when available
+        """
+        self.client = client
+        for fn in self._buffered_calls:
+            self._log.debug("Executing buffered call {}".format(fn))
+            fn()
+
+    def _buffer_call(self, callable):
+        self._buffered_calls.append(callable)
+
+    def get_channel(self, name: str) -> Union[Channel, ChannelProxy]:
+        if self.client:
+            return self.client.get_channel(name)
+
+        self._log.debug("Cannot get channel {} now, returning proxy".format(name))
+        proxy = self.ChannelProxy(name, self)
+        self._buffer_call(lambda: proxy._populate(self.client))
+        return proxy
+
+    def __getattr__(self, method):
+        if method not in ("on_connected", "on_message", "on_command", "on_join"):
+            raise AttributeError(method)
+
+        if self.client:
+            return getattr(self.client, method)(*args, **kwargs)
+
+        def on_anything(*args, **kwargs):
+            def decorator(fn):
+                self._log.debug("Cannot execute method {}(*{}, **{}) now, buffering".format(method, args, kwargs))
+                self._buffer_call(lambda: getattr(self.client, method)(*args, **kwargs)(fn))
+                return fn
+            return decorator
+
+        return on_anything

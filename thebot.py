@@ -19,9 +19,9 @@ bot = Client(**config.bot_config)
 async def on_connect():
     if hasattr(config, "nickserv_password"):
         # register waiter before sending the message to be sure to catch it
-        vhost_activated = bot.await_message(sender="HostServ", message=re.compile("vhost.*activated"))
+        nickserv_ok = bot.await_message(sender="NickServ", message=re.compile("Password accepted"))
         await bot.message("NickServ", "IDENTIFY {}".format(config.nickserv_password))
-        await vhost_activated
+        await nickserv_ok
     await bot.join("#minus")
 
 
