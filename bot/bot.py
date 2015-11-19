@@ -267,7 +267,7 @@ class Client(metaclass=LoggerMetaClass):
                 self._log.debug("Removing message handler {}".format(mh))
                 self._on_message_handlers.remove(mh)
 
-    async def await_message(self, *args, **kwargs) -> Message:
+    def await_message(self, *args, **kwargs) -> 'asyncio.Future[Message]':
         """
         Block until a message matches. See `on_message`
         """
@@ -277,7 +277,7 @@ class Client(metaclass=LoggerMetaClass):
             fut.set_result(message)
         # remove handler when done or cancelled
         fut.add_done_callback(lambda _: self.remove_message_handler(handler))
-        return await fut
+        return fut
 
     IrcMessage = namedtuple("IrcMessage", ("prefix", "args", "rest"))
 
@@ -328,7 +328,7 @@ class Client(metaclass=LoggerMetaClass):
                 self._log.debug("Removing command handler {}".format(ch))
                 self._on_command_handlers.remove(ch)
 
-    async def await_command(self, *args, **kwargs) -> IrcMessage:
+    def await_command(self, *args, **kwargs) -> 'asyncio.Future[IrcMessage]':
         """
         Block until a command matches. See `on_command`
         """
@@ -338,7 +338,7 @@ class Client(metaclass=LoggerMetaClass):
             fut.set_result(msg)
         # remove handler when done or cancelled
         fut.add_done_callback(lambda _: self.remove_command_handler(handler))
-        return await fut
+        return fut
 
     def _parsemsg(self, msg: str) -> IrcMessage:
         # adopted from twisted/words/protocols/irc.py
