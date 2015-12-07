@@ -127,8 +127,10 @@ class Client(metaclass=LoggerMetaClass):
         self._connected = False
         self._modules = []
 
-        # Register on_join handler
+        # Register JOIN, QUIT, NICK handlers
         self.on_command(cc.JOIN)(self._on_join)
+        self.on_command(cc.QUIT)(self._on_quit)
+        self.on_command(cc.NICK)(self._on_nick)
 
     def on_connected(self) -> Callable[[Callable], Callable]:
         def decorator(fn: Callable[[], None]):
@@ -506,6 +508,8 @@ class Client(metaclass=LoggerMetaClass):
         user = self._users.get(nick)
         if not user:
             self._users[nick] = user = User(nick, self, hostmask=hostmask)
+        elif not user.hostmask:
+            user.hostmask = hostmask
         return user
 
     def get_channel(self, name: str) -> Channel:
@@ -535,6 +539,11 @@ class Client(metaclass=LoggerMetaClass):
 
     async def _on_join(self, msg: IrcMessage) -> None:
         channel = self.get_channel(msg.rest)
+        user = self.get_user(msg.prefix)
+        if user.name != self.nick:
+            self._log.info("{} joined channel {}".format(user, channel))
+            channel.users.add(user)
+            return
         # TODO: make less ugly
         @self.on_command(cc.RPL_NAMREPLY, self.nick, "=", channel.name)
         @self.on_command(cc.RPL_NAMREPLY, self.nick, "*", channel.name)
@@ -577,6 +586,24 @@ class Client(metaclass=LoggerMetaClass):
     def add_module(self, module: 'Module'):
         self._modules.append(module)
         module._populate(self)
+
+    async def _on_quit(self, msg: IrcMessage) -> None:
+        user = self.get_user(msg.prefix)
+        for channel in self._channels:
+            channel.users.discard(user)
+        del self._users[user.name]
+
+    async def _on_nick(self, msg: IrcMessage) -> None:
+        """
+        Nick change
+        """
+        user = self.get_user(msg.prefix)
+        if user.name == self.nick:
+            # (Forced?) Nick change for ourself
+            self.nick = user.name
+        del self._users[user.name]
+        user.name = msg.args[1]
+        self._users[user.name] = user
 
 
 class Module(metaclass=LoggerMetaClass):
