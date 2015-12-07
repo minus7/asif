@@ -127,9 +127,10 @@ class Client(metaclass=LoggerMetaClass):
         self._connected = False
         self._modules = []
 
-        # Register JOIN, QUIT, NICK handlers
+        # Register JOIN, QUIT, PART, NICK handlers
         self.on_command(cc.JOIN)(self._on_join)
         self.on_command(cc.QUIT)(self._on_quit)
+        self.on_command(cc.PART)(self._on_part)
         self.on_command(cc.NICK)(self._on_nick)
 
     def on_connected(self) -> Callable[[Callable], Callable]:
@@ -541,8 +542,8 @@ class Client(metaclass=LoggerMetaClass):
         channel = self.get_channel(msg.rest)
         user = self.get_user(msg.prefix)
         if user.name != self.nick:
-            self._log.info("{} joined channel {}".format(user, channel))
             channel.users.add(user)
+            self._log.info("{} joined channel {}".format(user, channel))
             return
         # TODO: make less ugly
         @self.on_command(cc.RPL_NAMREPLY, self.nick, "=", channel.name)
@@ -589,21 +590,30 @@ class Client(metaclass=LoggerMetaClass):
 
     async def _on_quit(self, msg: IrcMessage) -> None:
         user = self.get_user(msg.prefix)
-        for channel in self._channels:
+        for channel in self._channels.values():
             channel.users.discard(user)
         del self._users[user.name]
+        self._log.info("{} has quit: {}".format(user, msg.rest))
+
+    async def _on_part(self, msg: IrcMessage) -> None:
+        user = self.get_user(msg.prefix)
+        channel = self.get_channel(msg.args[1])
+        channel.users.remove(user)
+        self._log.info("{} has left {}: {}".format(user, channel, msg.rest))
 
     async def _on_nick(self, msg: IrcMessage) -> None:
         """
         Nick change
         """
         user = self.get_user(msg.prefix)
-        if user.name == self.nick:
+        old_nick = user.name
+        del self._users[old_nick]
+        user.name = msg.args[1]
+        if old_nick == self.nick:
             # (Forced?) Nick change for ourself
             self.nick = user.name
-        del self._users[user.name]
-        user.name = msg.args[1]
         self._users[user.name] = user
+        self._log.info("{} changed their nick from {} to {}".format(user, old_nick, user.name))
 
 
 class Module(metaclass=LoggerMetaClass):
