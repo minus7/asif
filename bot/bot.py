@@ -608,7 +608,7 @@ class Client(metaclass=LoggerMetaClass):
         user = self.get_user(msg.prefix)
         old_nick = user.name
         del self._users[old_nick]
-        user.name = msg.args[1]
+        user.name = msg.rest
         if old_nick == self.nick:
             # (Forced?) Nick change for ourself
             self.nick = user.name
