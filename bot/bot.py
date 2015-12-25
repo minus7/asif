@@ -54,11 +54,15 @@ class Channel(metaclass=LoggerMetaClass):
 
         self._log.debug("Created {}".format(self))
 
-    def on_message(self, *args, **kwargs):
+    def on_message(self, *args, accept_query=False, **kwargs):
         """
         Convenience wrapper of `Client.on_message` pre-bound with `channel=self.name`.
         """
-        kwargs["channel"] = self.name
+        def matcher(msg: Message):
+            if msg.sender is self:
+                return True
+            if accept_query and isinstance(msg.sender, User):
+                return True
         return self.client.on_message(*args, **kwargs)
 
     async def message(self, text: str, notice: bool=False) -> None:
@@ -156,7 +160,7 @@ class Client(metaclass=LoggerMetaClass):
 
         Register a handler that's called after a message is received (PRIVMSG, NOTICE).
         The handler is called with the `Message` as argument, must be a coroutine
-        and is run non-blocking.
+        and is run non-blocking. All filters must match for a message to be accepted.
         :param message: message filter, string (exact match) or compiled regex object
         :param channel: channel filter, string (exact match) or compiled regex object
         :param sender: sender filter, string (exact match) or compiled regex object
