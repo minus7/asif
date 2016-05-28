@@ -107,7 +107,8 @@ class Message(metaclass=LoggerMetaClass):
 class Client(metaclass=LoggerMetaClass):
 
     def __init__(self, host: str, port: int, nick: str="TheBot", user: str="bot",
-                 realname: str="The Bot", secure: bool=False, encoding: str="utf-8"):
+                 realname: str="The Bot", secure: bool=False, encoding: str="utf-8",
+                 password: str=None):
         self.host = host
         self.port = port
         self.secure = secure
@@ -115,6 +116,7 @@ class Client(metaclass=LoggerMetaClass):
         self.user = user
         self.realname = realname
         self.encoding = encoding
+        self.password = password
 
         self._on_connected_handlers = []
         self._on_disconnected_handlers = []
@@ -458,6 +460,8 @@ class Client(metaclass=LoggerMetaClass):
                 self._bg(mh.handler(message, **match))
 
     async def _connect(self) -> None:
+        if self.password:
+            await self._send(cc.PASS, self.password)
         nick = self._send(cc.NICK, self.nick)
         user = self._send(cc.USER, self.user, 0, "*", rest=self.realname)
 
