@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# vim: set ts=4 sw=4 noet:
 
 from . import command_codes as cc
 
@@ -575,8 +574,8 @@ class Client(metaclass=LoggerMetaClass):
 
     async def part(self, channel: str, reason: str=None, block: bool=None) -> None:
         if block:
-            part_done = self.client.await_command(cc.PART, channel)
-        await self.client._send(cc.PART, channel, rest=reason)
+            part_done = self.await_command(cc.PART, channel)
+        await self._send(cc.PART, channel, rest=reason)
         if block:
             await part_done
 

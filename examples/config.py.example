@@ -10,7 +10,7 @@ import logging
 
 fmt = logging.Formatter("[%(asctime)s] %(levelname)s: %(filename)s:%(funcName)s(%(lineno)s): %(message)s")
 logger = logging.getLogger("bot")
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 sh = logging.StreamHandler()
 sh.setFormatter(fmt)

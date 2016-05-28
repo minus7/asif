@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# vim: set ts=4 sw=4 noet:
 
 import config
 from bot import Client, Channel
@@ -27,6 +26,8 @@ async def on_connect():
 
 @bot.on_message(re.compile("youtube\.com|youtu\.be"))
 async def youtube_info(message):
+    if not hasattr(config, "youtube_api_key"):
+        return
     link_re = re.compile(r"""(?:https?://)(?:www\.)?(?:(?:youtube\.com(?:/embed/|/watch/?\?(?:.*)v=))|youtu\.be/)(?P<id>[A-Za-z0-9-_]+)""")
     match = link_re.search(message.text)
     if not match:
@@ -61,9 +62,9 @@ async def part(message):
     await message.recipient.part()
     await bot.get_user("minus").message("Left {}".format(message.recipient))
 
-# @bot.on_join()
-# async def hello(channel):
-#     await channel.message("Hello {}!".format(channel.name))
+@bot.on_join()
+async def hello(channel):
+    await channel.message("Hello {}!".format(channel.name))
 
 
 async def cli_input():
