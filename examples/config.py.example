@@ -6,6 +6,8 @@ bot_config = {
     "nick": "TheBot",
 }
 
+# youtube_api_key = ""
+
 import logging
 
 fmt = logging.Formatter("[%(asctime)s] %(levelname)s: %(filename)s:%(funcName)s(%(lineno)s): %(message)s")
