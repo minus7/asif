@@ -53,16 +53,25 @@ class Channel(metaclass=LoggerMetaClass):
 
         self._log.debug("Created {}".format(self))
 
-    def on_message(self, *args, accept_query=False, **kwargs):
+    def on_message(self, *args, accept_query=False, matcher=None, **kwargs):
         """
         Convenience wrapper of `Client.on_message` pre-bound with `channel=self.name`.
         """
-        def matcher(msg: Message):
-            if msg.sender is self:
-                return True
-            if accept_query and isinstance(msg.sender, User):
-                return True
-        return self.client.on_message(*args, **kwargs)
+
+        if accept_query:
+            def new_matcher(msg: Message):
+                ret = True
+                if matcher:
+                    ret = matcher(msg)
+                    if ret is None or ret is False:
+                        return ret
+                if msg.recipient is not self and not isinstance(msg.sender, User):
+                    return False
+                return ret
+        else:
+            kwargs.setdefault("channel", self.name)
+            new_matcher = matcher
+        return self.client.on_message(*args, matcher=new_matcher, **kwargs)
 
     async def message(self, text: str, notice: bool=False) -> None:
         await self.client.message(self.name, text, notice=notice)

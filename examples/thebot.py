@@ -11,7 +11,7 @@ import aiohttp
 bot = Client(**config.bot_config)
 
 
-# helpch = bot.join("#help")
+chan = bot.get_channel("#minus")
 
 
 @bot.on_connected()
@@ -53,7 +53,7 @@ async def youtube_info(message):
 async def quit(message):
     await bot.quit("Goodbye!")
 
-@bot.on_message(matcher=lambda msg: msg.text.startswith("!join"))
+@bot.on_message(re.compile("^!join"))
 async def join(message):
     await bot.join(message.text.partition(" ")[2])
 
@@ -63,8 +63,12 @@ async def part(message):
     await bot.get_user("minus").message("Left {}".format(message.recipient))
 
 @bot.on_join()
-async def hello(channel):
+async def greet(channel):
     await channel.message("Hello {}!".format(channel.name))
+
+@chan.on_message(accept_query=True, matcher=lambda msg: msg.text.startswith("ping"))
+async def pong(message):
+    await message.reply("pong" + message.text[4:])
 
 
 async def cli_input():
