@@ -3,7 +3,7 @@
 from setuptools import setup
 
 setup(
-    name='bot',
+    name='asif',
     version='0.0.1',
     description='A Python 3.5, asyncio- and decorator-based IRC framework',
     author='minus',
@@ -16,5 +16,5 @@ setup(
         'Programming Language :: Python :: 3.5',
     ],
     keywords='irc bot framework',
-    packages=['bot'],
+    packages=['asif'],
 )

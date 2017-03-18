@@ -11,8 +11,8 @@ bot_config = {
 import logging
 
 fmt = logging.Formatter("[%(asctime)s] %(levelname)s: %(filename)s:%(funcName)s(%(lineno)s): %(message)s")
-logger = logging.getLogger("bot")
-logger.setLevel(logging.INFO)
+logger = logging.getLogger("")
+logger.setLevel(logging.DEBUG)
 
 sh = logging.StreamHandler()
 sh.setFormatter(fmt)

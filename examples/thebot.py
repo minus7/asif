@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import config
-from bot import Client, Channel
+from asif import Client, Channel
 from misc import async_input
 
 import asyncio
