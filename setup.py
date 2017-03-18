@@ -9,6 +9,7 @@ setup(
     author='minus',
     author_email='minus@mnus.de',
     license='MIT',
+    url='http://github.com/minus7/asif',
     classifiers=[
         'Development Status :: 3 - Alpha',
         'Intended Audience :: Developers',
