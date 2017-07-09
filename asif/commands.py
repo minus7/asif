@@ -18,8 +18,8 @@ class _Command:
 
     def __call__(self, *args, **kwargs):
         return self._fn(*args, **{
-            key: kwargs[key] for key in kwargs if key in self._spec.args \
-                    or key in self._spec.kwonlyargs
+            key: kwargs[key] for key in kwargs if (key in self._spec.args
+                    or key in self._spec.kwonlyargs)
         })
 
 class CommandSet:
@@ -38,13 +38,9 @@ class CommandSet:
         self._commands = dict()
         self._aliases = dict()
 
-        @client.on_message()
-        async def _dispatch(message):
-            return await self._dispatch(message)
+        client.on_message()(self._dispatch)
 
-        @self.command("help")
-        async def _help(*args, message=None):
-            return await self._help(*args, message=message)
+        self.command("help")(self._help)
 
         @self.command("bots")
         async def _bots(message):
@@ -52,10 +48,8 @@ class CommandSet:
 
     async def _help(self, *args, message):
         if len(args) == 0:
-            docs = list(self.prefix + \
-                    key + \
-                    (f" ({self._commands[key].hint})" if self._commands[key].hint else "") \
-                for key in self._commands if key not in ["bots", "help"])
+            docs = list(self.prefix + key + (f" ({cmd.hint})" if cmd.hint else "")
+                for key, cmd in self._commands.items() if key not in ("bots", "help"))
             lines = textwrap.wrap("; ".join(docs), width=400)
             for line in lines:
                 if isinstance(message.recipient, Channel):
@@ -91,16 +85,15 @@ class CommandSet:
             return
         cmd = self._commands.get(_cmd)
         if not cmd:
-            cmd = self._aliases.get(_cmd)
-        if cmd:
-            reply = await cmd(*args,
-                message=message,
-                client=self.client,
-                cmdset=self)
-            if isinstance(reply, str):
-                if isinstance(message.recipient, Channel):
-                    reply = f"{message.sender.name}: {reply}"
-                await message.reply(reply)
+            return
+        reply = await cmd(*args,
+            message=message,
+            client=self.client,
+            cmdset=self)
+        if isinstance(reply, str):
+            if isinstance(message.recipient, Channel):
+                reply = f"{message.sender.name}: {reply}"
+            await message.reply(reply)
 
     def command(self, name: str=None, hint: str=None, aliases: Sequence[str]=list()):
         """
