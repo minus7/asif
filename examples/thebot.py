@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import config
-from asif import Client, Channel
+from asif import Client, Channel, CommandSet
 from misc import async_input
 
 import asyncio
@@ -9,10 +9,8 @@ import re
 import aiohttp
 
 bot = Client(**config.bot_config)
-
-
-chan = bot.get_channel("#minus")
-
+cs = CommandSet(bot, ident="Example bot checking in")
+chan = bot.get_channel("#asif-test")
 
 @bot.on_connected()
 async def on_connect():
@@ -21,7 +19,7 @@ async def on_connect():
         nickserv_ok = bot.await_message(sender="NickServ", message=re.compile("Password accepted"))
         await bot.message("NickServ", "IDENTIFY {}".format(config.nickserv_password))
         await nickserv_ok
-    await bot.join("#minus")
+    await bot.join("#asif-test")
 
 
 @bot.on_message(re.compile("youtube\.com|youtu\.be"))
@@ -66,10 +64,12 @@ async def part(message):
 async def greet(channel):
     await channel.message("Hello {}!".format(channel.name))
 
-@chan.on_message(accept_query=True, matcher=lambda msg: msg.text.startswith("ping"))
-async def pong(message):
-    await message.reply("pong" + message.text[4:])
-
+@cs.command()
+async def ping():
+    """
+    .ping: respond with pong
+    """
+    return "pong"
 
 async def cli_input():
     while True:
