@@ -4,7 +4,7 @@ from setuptools import setup
 
 setup(
     name='asif',
-    version='0.2.0',
+    version='0.2.1',
     description='A Python 3.5, asyncio- and decorator-based IRC framework',
     author='minus',
     author_email='minus@mnus.de',
@@ -14,7 +14,7 @@ setup(
         'Development Status :: 3 - Alpha',
         'Intended Audience :: Developers',
         'License :: OSI Approved :: MIT License',
-        'Programming Language :: Python :: 3.5',
+        'Programming Language :: Python :: 3.6',
     ],
     keywords='irc bot framework',
     packages=['asif'],

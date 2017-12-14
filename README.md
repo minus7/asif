@@ -1,7 +1,7 @@
 # Asyncio-powered IRC Bot Framework
 asif allows you to write an IRC bot that listens to commands in a **Flask**-like manner. Commands are functions, registered to the framework via decorators. Writing long-running background processes is possible because the whole framework is based on asyncio, just use `asyncio.ensure_future` on your function as usual.
 
-Requires Python 3.5 for the **async/await** syntax.
+Requires Python 3.6 for the **async/await** syntax.
 
 ## Example Code
 ```python
