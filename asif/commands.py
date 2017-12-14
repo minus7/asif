@@ -69,10 +69,13 @@ class CommandSet:
                     await message.sender.message(line, notice=True)
 
     async def _dispatch(self, message):
-        args = shlex.split(message.text)
+        try:
+            args = shlex.split(message.text)
+        except ValueError:
+            return
         if len(args) == 0:
             return
-        if args[0] in [f"{self.client.nick}:", f"{self.client.nick},"]:
+        if args[0] in [f"{self.client.nick}:", f"{self.client.nick},"] and len(args) >= 2:
             _cmd = args[1]
             args = args[2:]
         elif args[0][0] == self.prefix:
