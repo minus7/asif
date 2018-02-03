@@ -42,9 +42,10 @@ class CommandSet:
 
         self.command("help")(self._help)
 
-        @self.command("bots")
-        async def _bots(message):
-            await message.reply(ident)
+        if ident:
+            @self.command("bots")
+            async def _bots(message):
+                await message.reply(ident)
 
     async def _help(self, *args, message):
         if len(args) == 0:
