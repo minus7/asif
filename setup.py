@@ -4,8 +4,8 @@ from setuptools import setup
 
 setup(
     name='asif',
-    version='0.2.2',
-    description='A Python 3.6, asyncio- and decorator-based IRC framework',
+    version='0.3.0',
+    description='A Python 3.6+, asyncio- and decorator-based IRC framework',
     author='minus',
     author_email='minus@mnus.de',
     license='MIT',
