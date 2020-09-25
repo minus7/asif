@@ -7,10 +7,12 @@ from misc import async_input
 import asyncio
 import re
 import aiohttp
+import time
 
 bot = Client(**config.bot_config)
 cs = CommandSet(bot, ident="Example bot checking in")
 chan = bot.get_channel("#asif-test")
+stop = False
 
 @bot.on_connected()
 async def on_connect():
@@ -49,6 +51,8 @@ async def youtube_info(message):
 
 @bot.on_message("!quit")
 async def quit(message):
+    global stop
+    stop = True
     await bot.quit("Goodbye!")
 
 @bot.on_message(re.compile("^!join"))
@@ -79,4 +83,10 @@ async def cli_input():
 
 bot._bg(cli_input())
 loop = asyncio.get_event_loop()
-loop.run_until_complete(bot.run())
+while True:
+    try:
+        loop.run_until_complete(bot.run())
+        if stop: break
+    except Exception as e:
+        print(e)
+    time.sleep(10)
