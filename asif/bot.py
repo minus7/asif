@@ -128,7 +128,6 @@ class Client(metaclass=LoggerMetaClass):
         self.password = password
 
         self._on_connected_handlers = []
-        self._on_disconnected_handlers = []
         self._on_message_handlers = []
         self._users = {}
         self._channels = {}
@@ -150,13 +149,6 @@ class Client(metaclass=LoggerMetaClass):
     def on_connected(self) -> Callable[[Callable], Callable]:
         def decorator(fn: Callable[[], None]):
             self._on_connected_handlers.append(fn)
-            return fn
-
-        return decorator
-
-    def on_disconnected(self) -> Callable[[Callable], Callable]:
-        def decorator(fn: Callable[[str], None]):
-            self._on_disconnected_handlers.append(fn)
             return fn
 
         return decorator
@@ -411,6 +403,8 @@ class Client(metaclass=LoggerMetaClass):
     async def run(self) -> None:
         self._reader, self._writer = await asyncio.open_connection(self.host, self.port)
 
+        # start connect procedure in the background.
+        # messages processed in it actually already go through the main loop below.
         self._bg(self._connect())
 
         while not self._reader.at_eof():
@@ -593,11 +587,6 @@ class Client(metaclass=LoggerMetaClass):
             await part_done
 
     async def quit(self, reason: str=None) -> Channel:
-        for handler in self._on_disconnected_handlers:
-            try:
-                await handler(reason)
-            except:
-                self._log.exception("Connect handler {} raised exception".format(handler))
         await self._send(cc.QUIT, rest=reason)
 
     def add_module(self, module: 'Module'):
