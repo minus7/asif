@@ -4,7 +4,7 @@ from setuptools import setup
 
 setup(
     name='asif',
-    version='0.3.0',
+    version='0.3.1',
     description='A Python 3.6+, asyncio- and decorator-based IRC framework',
     author='minus',
     author_email='minus@mnus.de',
