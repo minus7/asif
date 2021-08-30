@@ -288,7 +288,7 @@ class Client(metaclass=LoggerMetaClass):
         fut.add_done_callback(lambda _: self.remove_message_handler(handler))
         return fut
 
-    IrcMessage = namedtuple("IrcMessage", ("prefix", "args", "rest"))
+    IrcMessage = namedtuple("IrcMessage", ("prefix", "args"))
 
     JoinHandler = namedtuple("JoinHandler", ("channel", "handler"))
 
@@ -313,18 +313,17 @@ class Client(metaclass=LoggerMetaClass):
                 self._log.debug("Removing join handler {}".format(jh))
                 self._on_join_handlers.remove(jh)
 
-    CommandHandler = namedtuple("CommandHandler", ("args", "rest", "handler"))
+    CommandHandler = namedtuple("CommandHandler", ("args", "handler"))
 
-    def on_command(self, *args: Sequence[str], rest: str=None) -> Callable[[Callable], Callable]:
+    def on_command(self, *args: Sequence[str]) -> Callable[[Callable], Callable]:
         """
         Register a handler that's called when (the beginning of) a `IrcMessage` matches.
         The handler is called with the `IrcMessage` as argument, must be a coroutine
         and is run blocking, i.e. you cannot use `await_command` in it!
         :param args: commands args that must match (the actual command is the first arg)
-        :param rest: match the rest (after the " :") of the `IrcMessage`
         """
         def decorator(fn: Callable[[self.IrcMessage], None]):
-            ch = self.CommandHandler(args, rest, fn)
+            ch = self.CommandHandler(args, fn)
             self._on_command_handlers.append(ch)
             self._log.debug("Added command handler {}".format(ch))
             return fn
@@ -354,27 +353,32 @@ class Client(metaclass=LoggerMetaClass):
         if not msg:
             return
         prefix = None
-        rest = None
         if msg[0] == ":":
             prefix, msg = msg[1:].split(" ", 1)
         if " :" in msg:
             msg, rest = msg.split(" :", 1)
-            args = msg.split()
+            args = msg.split() + [rest]
         else:
             args = msg.split()
-        return self.IrcMessage(prefix, tuple(args), rest)
+        return self.IrcMessage(prefix, tuple(args))
 
-    def _buildmsg(self, *args: List[str], prefix: str=None, rest: str=None) -> str:
+    def _buildmsg(self, *args: List[str], prefix: str=None) -> str:
         msg = ""
         if prefix:
             msg += ":{} ".format(prefix)
-        msg += " ".join((str(arg) for arg in args))
-        if rest:
-            msg += " :{}".format(rest)
+        def fmtarg(i, arg):
+            arg = str(arg)
+            if i == len(args) - 1 and (" " in arg or arg.startswith(":")):
+                return ":" + arg
+            elif i != len(args) - 1 and (" " in arg or arg.startswith(":")):
+                raise ValueError(f"non-final argument contains space or begins with colon: {args}")
+            else:
+                return arg
+        msg += " ".join((fmtarg(i, arg) for i, arg in enumerate(args)))
         return msg
 
-    async def _send(self, *args: List[Any], prefix: str=None, rest: str=None) -> None:
-        msg = self._buildmsg(*args, prefix=prefix, rest=rest)
+    async def _send(self, *args: List[Any], prefix: str=None) -> None:
+        msg = self._buildmsg(*args, prefix=prefix)
         self._log.debug("<- {}".format(msg))
         self._writer.write(msg.encode(self.encoding) + b"\r\n")
 
@@ -382,7 +386,7 @@ class Client(metaclass=LoggerMetaClass):
         """
         Lower level messaging function used by User and Channel
         """
-        await self._send(cc.PRIVMSG if not notice else cc.NOTICE, recipient, rest=text)
+        await self._send(cc.PRIVMSG if not notice else cc.NOTICE, recipient, text)
 
     async def _get_message(self) -> IrcMessage:
         line = await self._reader.readline()
@@ -421,7 +425,7 @@ class Client(metaclass=LoggerMetaClass):
 
             for ch in self._on_command_handlers:
                 args = msg.args[:len(ch.args)]
-                if ch.args == args and (not ch.rest or ch.rest == msg.rest):
+                if ch.args == args:
                     self._log.debug("Calling command handler {} with input {}".format(ch, msg))
                     await ch.handler(msg)
 
@@ -431,7 +435,7 @@ class Client(metaclass=LoggerMetaClass):
             if msg.args[0] in (cc.PRIVMSG, cc.NOTICE):
                 sender = self._resolve_sender(msg.prefix)
                 recipient = self._resolve_recipient(msg.args[1])
-                message = Message(sender, recipient, msg.rest, (msg.args[0] == cc.NOTICE))
+                message = Message(sender, recipient, msg.args[2], (msg.args[0] == cc.NOTICE))
                 await self._handle_on_message(message)
                 continue
 
@@ -452,7 +456,7 @@ class Client(metaclass=LoggerMetaClass):
 
     async def _handle_special(self, msg: IrcMessage) -> bool:
         if msg.args[0] == cc.PING:
-            await self._send(cc.PONG, rest=msg.rest)
+            await self._send(cc.PONG, *msg.args[1:])
             return True
         return False
 
@@ -466,7 +470,7 @@ class Client(metaclass=LoggerMetaClass):
         if self.password:
             await self._send(cc.PASS, self.password)
         nick = self._send(cc.NICK, self.nick)
-        user = self._send(cc.USER, self.user, 0, "*", rest=self.realname)
+        user = self._send(cc.USER, self.user, 0, "*", self.realname)
 
         @self.on_command(cc.ERR_NICKNAMEINUSE)
         async def nick_in_use(msg):
@@ -482,7 +486,23 @@ class Client(metaclass=LoggerMetaClass):
                     modes, _, prefixes = value[1:].partition(")")
                     self._prefix_map = dict(zip(prefixes, modes))
 
-        end_motd = self.await_command(cc.RPL_ENDOFMOTD)
+        def await_motd():
+            fut = asyncio.Future()
+
+            @self.on_command(cc.RPL_ENDOFMOTD)
+            async def endofmotd(msg):
+                fut.set_result(msg)
+
+            @self.on_command(cc.ERR_NOMOTD)
+            async def errnomotd(msg):
+                fut.set_result(msg)
+
+            # remove handler when done or cancelled
+            fut.add_done_callback(lambda _: self.remove_command_handler(endofmotd))
+            fut.add_done_callback(lambda _: self.remove_command_handler(errnomotd))
+            return fut
+
+        end_motd = await_motd()
 
         await nick
         await user
@@ -549,7 +569,7 @@ class Client(metaclass=LoggerMetaClass):
             return await fut
 
     async def _on_join(self, msg: IrcMessage) -> None:
-        channel = self.get_channel(msg.rest)
+        channel = self.get_channel(msg.args[1])
         user = self.get_user(msg.prefix)
         if user.name != self.nick:
             channel.users.add(user)
@@ -560,7 +580,7 @@ class Client(metaclass=LoggerMetaClass):
         @self.on_command(cc.RPL_NAMREPLY, self.nick, "*", channel.name)
         @self.on_command(cc.RPL_NAMREPLY, self.nick, "@", channel.name)
         async def gather_nicks(msg):
-            for nick in msg.rest.strip().split(" "):
+            for nick in msg.args[-1].strip().split(" "):
                 mode = self._prefix_map.get(nick[0], None)
                 if mode:
                     nick = nick[1:]
@@ -582,12 +602,12 @@ class Client(metaclass=LoggerMetaClass):
     async def part(self, channel: str, reason: str=None, block: bool=None) -> None:
         if block:
             part_done = self.await_command(cc.PART, channel)
-        await self._send(cc.PART, channel, rest=reason)
+        await self._send(cc.PART, channel, reason)
         if block:
             await part_done
 
     async def quit(self, reason: str=None) -> Channel:
-        await self._send(cc.QUIT, rest=reason)
+        await self._send(cc.QUIT, reason)
 
     def add_module(self, module: 'Module'):
         self._modules.append(module)
@@ -598,13 +618,13 @@ class Client(metaclass=LoggerMetaClass):
         for channel in self._channels.values():
             channel.users.discard(user)
         del self._users[user.name]
-        self._log.info("{} has quit: {}".format(user, msg.rest))
+        self._log.info("{} has quit: {}".format(user, msg.args[-1]))
 
     async def _on_part(self, msg: IrcMessage) -> None:
         user = self.get_user(msg.prefix)
         channel = self.get_channel(msg.args[1])
         channel.users.remove(user)
-        self._log.info("{} has left {}: {}".format(user, channel, msg.rest))
+        self._log.info("{} has left {}: {}".format(user, channel, msg.args[-1]))
 
     async def _on_nick(self, msg: IrcMessage) -> None:
         """
@@ -613,7 +633,7 @@ class Client(metaclass=LoggerMetaClass):
         user = self.get_user(msg.prefix)
         old_nick = user.name
         del self._users[old_nick]
-        user.name = msg.rest
+        user.name = msg.args[1]
         if old_nick == self.nick:
             # (Forced?) Nick change for ourself
             self.nick = user.name

@@ -79,7 +79,7 @@ async def cli_input():
     while True:
         inp = await async_input("> ")
         msg = bot._parsemsg(inp)
-        await bot._send(*msg.args, prefix=msg.prefix, rest=msg.rest)
+        await bot._send(*msg.args, prefix=msg.prefix)
 
 bot._bg(cli_input())
 loop = asyncio.get_event_loop()
