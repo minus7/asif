@@ -386,6 +386,8 @@ class Client(metaclass=LoggerMetaClass):
         """
         Lower level messaging function used by User and Channel
         """
+        # filter newlines and null bytes
+        text = text.translate({ord(c): None for c in "\0\n\r"})
         await self._send(cc.PRIVMSG if not notice else cc.NOTICE, recipient, text)
 
     async def _get_message(self) -> IrcMessage:
