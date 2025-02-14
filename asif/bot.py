@@ -34,12 +34,6 @@ class User(metaclass=LoggerMetaClass):
     async def message(self, text: str, notice: bool=False) -> None:
         await self.client.message(self.name, text, notice=notice)
 
-    def __eq__(self, other: 'User') -> bool:
-        return self.name == other.name
-
-    def __hash__(self):
-        return hash(self.name)
-
     def __repr__(self):
         return "<User {self.name}!{self.hostmask}>".format(self=self)
 
